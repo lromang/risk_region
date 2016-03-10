@@ -1,26 +1,37 @@
 ########################################
 ## Libraries
 ########################################
+## Manejo de JSON
+library(jsonlite)
 library(rjson)
 library(RJSONIO)
+## Manejo de URLs
 library(RCurl)
+## Manejo de arreglos
 library(plyr)
-library(stringr)
-library(data.table)
-library(caret)
 library(dplyr)
-library(geosphere)
-library(ggplot2)
-library(deldir)
 library(tidyr)
-library(rje)
-library(sp)
-library(SDMTools)
+## Manejo de cadenas de caracteres
+library(stringr)
+## Manejo de data frames
+library(data.table)
+## Predicción
+library(caret)
+## Geoespacial
+library(geosphere)
 library(maps)
 library(maptools)
 library(spatstat)
 library(rgeos)
 library(rgdal)
+## Gráficas
+library(ggplot2)
+## Otros
+library(ggmap)
+library(deldir)
+library(rje)
+library(sp)
+library(SDMTools)
 library(PBSmapping)
 library(sp)
 library(prevR)
@@ -131,31 +142,6 @@ get_connect <- function(lat, lon, dist = 20, net = 3){
 }
 
 ##-------------------------------------
-## Prim
-##-------------------------------------
-## G = [x, y, xend, yend, p]
-prim <- function(G){
-    ## Generate set of vertex
-    G$id_o  <- paste0(G[,1],G[,2])
-    G$id_d  <- paste0(G[,3],G[,4])
-    nodes   <- unique(G$id_o)
-    n_nodes <- length(nodes)
-    node_0  <- sample(length(nodes),1)
-    V0      <- nodes[node_0]
-    T       <- c()
-    k       <- 1
-    ## Start iteration
-    while(k <= (n_nodes - 1)){
-    candidates <- dplyr::filter(G, id_o %in% V0 & !(id_d %in% V0))
-    enter      <- candidates[which(candidates$p == min(candidates$p))[1], ]
-    T          <- rbind(T, enter)
-    V0         <- c(V0, enter$id_d)
-    k          <- k + 1
-    }
-    T
-}
-
-##-------------------------------------
 ## transform coord
 ##-------------------------------------
 trans_coord <- function(coord, pow = 1){
@@ -168,75 +154,239 @@ trans_coord <- function(coord, pow = 1){
       extract_numeric(sec) / 3600)
 }
 
-########################################
-########################################
-############# Read in data #############
-########################################
-########################################
+##-------------------------------------
+## tesselate
+##-------------------------------------
+tesselate <- function(grids,
+                     map          = NULL,
+                     alpha        = .3,
+                     top_left     = c(-118.383398, 32.948893),
+                     bottom_left  = c(-118.383398, 14.160275),
+                     top_right    = c(-86.783107,  32.948893),
+                     bottom_right = c(-86.783107,  14.160275)){
+  results  <- list()
+  intercepts <- ceiling(sqrt(grids+1))
+  h_lines <- data.frame(x    = rep(top_left[1], intercepts),
+                       y    = seq(top_left[2], bottom_left[2],
+                                  length = intercepts),
+                        xend = rep(top_right[1], intercepts),
+                       yend  = seq(top_right[2], bottom_right[2],
+                                  length = intercepts))
+  v_lines <- data.frame(x = seq(top_left[1], top_right[1],
+                               length = intercepts),
+                        y = rep(top_left[2], intercepts),
+                       xend = seq(bottom_left[1], bottom_right[1],
+                                  length = intercepts),
+                        yend = rep(bottom_right[2],intercepts))
+  if (! is.null(map)){
+      map    <- map +  geom_hline(data = h_lines, aes(yintercept = y),
+                                 col = "red",
+                                 alpha = alpha)
+      map    <- map +  geom_vline(data = v_lines, aes(xintercept = x),
+                                 col = "red",
+                                 alpha = alpha)
+}
+  x <- seq(top_left[1], top_right[1], length = intercepts)
+  y <- seq(top_right[2], bottom_right[2],length = intercepts)
+  k = 1
+  xcoord <- c()
+  ycoord <- c()
+  for (i in 1:(length(y)-1)){
+    for(j in 1:(length(x)-1)){
+      xcoord[k] <- (x[j] + x[j + 1])/2
+      ycoord[k] <- (y[i] + y[i + 1])/2
+      k = k + 1
+    }
+  }
+  points <- data.frame(x = xcoord, y = ycoord)
+  results[[1]] <- map
+  # ordenadas
+  results[[2]] <- seq(top_left[2], bottom_left[2],length = intercepts)
+  # abscisas
+  results[[3]] <- seq(bottom_left[1],bottom_right[1],length = intercepts)
+  # area aproximada de la celda
+  results[[4]] <- (abs((bottom_right[1]-top_left[1]))*
+                  abs((top_left[2]-bottom_right[2])))/grids
+  # centro de la celda
+  results[[5]] <- points
 
-########### Shapefiles
-## Municipalities
-mun <- readOGR("../datos/shps/tab",
-              "tab_municipio")
+  return(results)
+}
+
+
+##-------------------------------------
+## blocks
+##-------------------------------------
+blocks <- function(ordinates, abscises){
+  block <- list()
+  k        <- 1
+  for (i in 1:(length(ordinates)-1)){
+    for ( j in 1:(length(abscises)-1)){
+      entry      <- list()
+      entry[[1]] <- c(abscises[j], ordinates[i])  # upper left
+      entry[[2]] <- c(abscises[j + 1], ordinates[i + 1])  # bottom right
+      block[[k]] <- entry
+      k = k + 1
+    }
+  }
+  block
+}
+
+
+
+##-------------------------------------
+## in.block
+##-------------------------------------
+in.block <- function(block, pop){
+  pop.block <- list()
+  for ( i in 1:length(block)){
+  print(i)
+  list   <- block[[i]]
+  pop.xreduce   <- c()
+  pop.xyreduce <- c()
+  # Obtiene localidades cuyas coordenadas caigan dentro de la celda i
+  pop.xreduce   <- pop[pop[, 1] > as.numeric(list[[1]][1]), ]
+  pop.xreduce   <- pop.xreduce[pop.xreduce[, 1] < as.numeric(list[[2]][1]), ]
+  pop.xyreduce <- pop.xreduce[pop.xreduce[, 2] > as.numeric(list[[2]][2]), ]
+  pop.xyreduce <- pop.xyreduce[pop.xyreduce[, 2] < as.numeric(list[[1]][2]), ]
+  ## Una vez seleccionadas las localidades obtiene datos relevantes.
+  data.block <- list()
+  data.block[[1]] <- list                             ## coordenadas extremas de cada celda
+  pop.xyreduce$celda <- rep(i,nrow(pop.xyreduce))
+  data.block[[2]] <- pop.xyreduce                     ## datos de las localidades
+  data.block[[3]] <- sum(pop.xyreduce[, 3])           ## población por celda
+  ## data.block[[4]] <- mean(pop.xyreduce[, 4])      ## altura promedio de la celda
+  data.block[[4]] <-  areaPolygon(matrix(
+      c(data.block[[1]][[1]][1],data.block[[1]][[1]][2],
+        data.block[[1]][[2]][1],data.block[[1]][[1]][2],
+        data.block[[1]][[2]][1],data.block[[1]][[2]][2],
+        data.block[[1]][[1]][1],data.block[[1]][[2]][2] ),
+      nrow = 4,
+      ncol = 2,
+      byrow = TRUE ) )/1e6 ## area de cada celda km^²
+  ## data.block[[5]] <- sd(pop.xyreduce[, 4])              # desviación estandar de las altitudes
+  pop.block[[i]]  <- data.block
+  }
+  pop.block
+}
+
+## Datos más específicos por celda
+in.block.fac <- function(block, pop){
+  pop.block <- list()
+  for ( i in 1:length(block)){
+    print(i)
+    list                  <- block[[i]]
+    pop.xreduce  <- c()
+    pop.xyreduce <- c()
+    ## Obtiene localidades cuyas coordenadas caigan dentro de la celda i
+    pop.xreduce  <- pop[pop[, 1] > as.numeric(list[[1]][1]), ]
+    pop.xreduce  <- pop.xreduce[pop.xreduce[, 1] < as.numeric(list[[2]][1]), ]
+    pop.xyreduce <- pop.xreduce[pop.xreduce[, 2] > as.numeric(list[[2]][2]), ]
+    pop.xyreduce <- pop.xyreduce[pop.xyreduce[, 2] < as.numeric(list[[1]][2]), ]
+    ## Una vez seleccionadas las localidades obtiene datos relevantes.
+    data.block         <- list()
+    data.block[[1]] <- list                    ## coordenadas extremas de cada celda
+    pop.xyreduce$celda <- rep(i,nrow(pop.xyreduce))
+    data.block[[2]] <- pop.xyreduce            ## datos por celda
+    data.block[[3]] <- nrow(pop.xyreduce)      ## total apariciones por celda
+    data.block[[4]] <-  areaPolygon(matrix(
+        c(data.block[[1]][[1]][1],data.block[[1]][[1]][2],
+          data.block[[1]][[2]][1],data.block[[1]][[1]][2],
+          data.block[[1]][[2]][1],data.block[[1]][[2]][2],
+          data.block[[1]][[1]][1],data.block[[1]][[2]][2] ),
+        nrow = 4,
+        ncol = 2,
+        byrow = TRUE ) )/1e6 ## area de cada celda m^²    
+    pop.block[[i]]   <- data.block
+  }
+  pop.block
+}
+
+
+##-------------------------------------
+## coordExtract
+##-------------------------------------
+coordExtract <- function(shape){
+    coords       <- list()
+    polygons   <- shape@polygons
+    for(i in 1:length(polygons)){
+        coords[[i]]       <- polygons[[i]]@Polygons[[1]]@coords
+        ## coords[[i]]       <- coords[[i]][,c(1,2)]
+    }
+    coords
+}
+
+resRelevant <- function(list){
+    ldply(list, function(t){
+    result    <- list()
+    result[[1]] <-  t[[1]]                  ## Coordenadas de cada celda.
+    result[[2]] <-  nrow(t[[2]])            ## Número de localidades por celda.
+    result[[3]] <-  t[[3]]                  ## Población por celda.
+    result[[4]] <-  t[[5]]                  ## Área por cada celda.
+    result
+    })
+}
+
+#######################################
+## Read in data
+#######################################
+## Shapes Services per municipality
+## Get all possible dirs
+files <- list.dirs("../datos/shps") 
+files <- files[!str_detect(files, "metadatos")]
+files <- files[!str_detect(files, "catalogos")]
+files <- files[-1]
+municipalities <- list()
+services <- list()
+## -----------------------------
+## Read in all shapes
+## -----------------------------
+for(i in 1:length(files)){
+    state <- str_split(files[i], "/")[[1]][4]
+    ## Read in services
+    service_name <- paste0(state, "_servicios_puntual" )
+    services[[i]] <- readOGR(files[i],
+                            service_name)
+    ## Read in municipalities
+    mun_name <- paste0(state, "_municipio" )
+    services[[i]] <- readOGR(files[i],
+                            mun_name)
+}
+
 ## Denue
 denue <- readOGR("../datos/denue_shps/tabasco",
-              "DENUE_INEGI_27_")
-
-## OXXO
-
-
-########### Population
-censo <- read.dbf("./datos/censo.dbf")
+                "DENUE_INEGI_27_")
+## Population
+censo <- read.dbf("../datos/censo.dbf")
 censo <- censo[!is.na(censo$LATITUD),]
 
-## Core Data
-c.data <- censo[,1:10]
 ## proc coords
-coords <- c.data[,c(7,8)]
+coords <- censo[,c(7,8)]
 coords[, 1] <- laply(coords[,1], function(t)t <- trans_coord(t))
 coords[, 2] <- laply(coords[,2], function(t)t <- trans_coord(t,0))
-c.data[,c(7,8)] <- coords
+censo[,c(7,8)] <- coords
+write.csv(censo[,1:10], "./datos/censo_filter.csv", row.names = FALSE)
 
-########################################
-## Select entity of interest
-########################################
-entity <- dplyr::filter(c.data, ENTIDAD == "07")
-########################################
-## Select municipalities of interest
-########################################
-mun.int <- dplyr::filter(entity,
-                        NOM_MUN %in% c("Villa Corzo",
-                                       "Villaflores"))
+## Filter censo inside 
+coords <- censo[, c(7,8)]
+coordinates(coords) <- c("LONGITUD", "LATITUD")
+proj4string(coords) <- proj4string(mun)
+inside  <- !is.na(over(coords, as(mun, "SpatialPolygons")))
+censo.int   <- censo[inside,]
 
-########################################
-## Select shapes of municipalities
-## of interest
-########################################
-## CVE_MUN = 108 107
-cve_mun <- 107
-shp.mun <- mun[mun$CVE_MUN %in% c(cve_mun), ]
+#######################################
+## Filter relevant data DENUE
+#######################################
+## Escuelas
+escuelas <- denue[str_detect(denue$codigo_act, "^61.*" ),]
+## Hospitales
+hospitales <- denue[str_detect(denue$codigo_act, "^62.*" ),]
+## Energía
+energia <- denue[str_detect(denue$codigo_act, "^22.*" ),]
+## Gasolina
+gasolina <- denue[str_detect(denue$codigo_act, "468411" ),]
 
-## Plot filtered data
-ggplot(shp.mun, aes(x = long, y = lat)) + geom_path() +
-    geom_point(data = mun.int, aes(x = LONGITUD, y = LATITUD))
 
-########################################
-## Save data & shapes of interest
-########################################
-## write.csv(mun.int,
-##          "./datos_out/mun_int.csv",
-##          row.names = FALSE)
-## writeOGR(shp.mun,
-##         "./datos_out",
-##         "shp_mun_int",
-##        driver = "ESRI Shapefile")
-mun.int <- read.csv("./datos_out/mun_int.csv",
-                   stringsAsFactors = FALSE)
-
-########################################
-## Filter by population
-########################################
-data.pop <- dplyr::filter(mun.int, POBTOT >= 1000)
 
 
 ########################################
