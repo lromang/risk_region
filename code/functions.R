@@ -332,25 +332,25 @@ resRelevant <- function(list){
 #######################################
 ## Shapes Services per municipality
 ## Get all possible dirs
-files <- list.dirs("../datos/shps") 
+files <- list.dirs("../datos/shps2015") 
 files <- files[!str_detect(files, "metadatos")]
 files <- files[!str_detect(files, "catalogos")]
 files <- files[-1]
 municipalities <- list()
-services <- list()
+
 ## -----------------------------
 ## Read in all shapes
 ## -----------------------------
 for(i in 1:length(files)){
     state <- str_split(files[i], "/")[[1]][4]
     ## Read in services
-    service_name <- paste0(state, "_servicios_puntual" )
-    services[[i]] <- readOGR(files[i],
-                            service_name)
+    ## service_name <- paste0(state, "_servicios_puntual" )
+    ## services[[i]] <- readOGR(files[i],
+    ##                        service_name)
     ## Read in municipalities
     mun_name <- paste0(state, "_municipio" )
-    services[[i]] <- readOGR(files[i],
-                            mun_name)
+    municipalities[[i]] <- readOGR(files[i],
+                                  mun_name)
 }
 
 ## Denue
