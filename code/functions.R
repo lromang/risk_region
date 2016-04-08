@@ -365,7 +365,9 @@ coords <- censo[,c(7,8)]
 coords[, 1] <- laply(coords[,1], function(t)t <- trans_coord(t))
 coords[, 2] <- laply(coords[,2], function(t)t <- trans_coord(t,0))
 censo[,c(7,8)] <- coords
-write.csv(censo[,1:10], "./datos/censo_filter.csv", row.names = FALSE)
+write.csv(censo[,c(1:10, 196,
+                   197, 198,
+                   199)], "../datos/censo_filter.csv", row.names = FALSE)
 
 ## Filter censo inside 
 coords <- censo[, c(7,8)]

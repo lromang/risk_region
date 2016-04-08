@@ -40,6 +40,23 @@ library(foreign)
 ########################################
 ## functions
 ########################################
+## CVE INEGI
+concat_n <- function(string, n){
+    r     <- n - str_length(string)
+    ceros <- paste(rep(0,r), collapse = "")
+    paste0(ceros,string)
+}
+
+create_key <- function(ent, mun, loc){
+    ent <- laply(ent, function(t) t <- concat_n(t, 2))
+    mun <- laply(mun, function(t) t <- concat_n(t, 3))
+    loc <- laply(loc, function(t) t <- concat_n(t, 4))
+    key <- c()
+    for(i in 1:length(ent)){
+        key[i] <- paste0(ent[i], mun[i], loc[i])
+    }
+    key
+}
 
 ## From Json coords
 from_json_coords <- function(json, cols){
@@ -142,26 +159,82 @@ write.csv(data_grietas, "../datos/output_data/data_grietas.csv", row.names = FAL
 ## ---------------------------------
 ## Stage II (Marginacion)
 ## ---------------------------------
-
-## ---------------------------------
-## Stage III (Medios Masivos)
-## ---------------------------------
+marg <- read.csv("../datos/margi/marg.csv",
+                stringsAsFactors = FALSE)
+key_marg <- create_key(marg$ENT, marg$MUN, marg$LOC)
+marg_interest <- marg[,c(18,19)]
+marg_interest$CVE_INEGI <- key_marg
+data_full <- merge(cap.data, marg_interest, by = "CVE_INEGI")
 
 ## ---------------------------------
 ## Stage IV (México Conectado)
 ## ---------------------------------
+mex_con <- read.csv("../datos/mex_connect/mex_connect.csv",
+                   stringsAsFactors = FALSE)
+
+key_con   <- laply(mex_con$edomunloc,
+                  function(t)t <- {
+                      ans <- NA
+                      if(str_length(t) <= 9) ans <- concat_n(t, 9)
+                      ans
+                  })
+mex_con$key_con <- key_con
+
+
+connected <- laply(cap.data$cve_inegi, function(t) t <- t %in% key_con)
+cap.data$mex_con <- connected
+names(cap.data)  <- toupper(names(cap.data))
+write.csv(cap.data, "../datos/output_data/cap_data.csv", row.names = FALSE)
 
 ## ---------------------------------
-## Stage V (México Conectividad)
+## Stage V (penetración comunicación)
 ## ---------------------------------
+coverage <- read.csv("../datos/CellCoverage/FinalCoverage.csv",
+                    stringsAsFactors = FALSE)
+names(coverage) <- c("CVE_INEGI", "Iusa3G", "IusaGSM", "Mov", "Tel3G", "TelGSM", "Type")
+test <- laply(coverage$CVE_INEGI, function(t) t <- concat_n(t, 9))
+coverage$CVE_INEGI <- test
 
+## Trick
+iusa3g <- na.omit(coverage[,c(1,2)])
+iusags <- na.omit(coverage[,c(1,3)])
+movist <- na.omit(coverage[,c(1,4)])
+telc3g <- na.omit(coverage[,c(1,5)])
+telcgs <- na.omit(coverage[,c(1,6)])
+
+full_iusa3g <- data_full$CVE_INEGI %in% iusa3g$CVE_INEGI
+full_iusags <- data_full$CVE_INEGI %in% iusags$CVE_INEGI
+full_movist <- data_full$CVE_INEGI %in% movist$CVE_INEGI
+full_telc3g <- data_full$CVE_INEGI %in% telc3g$CVE_INEGI
+full_telcgs <- data_full$CVE_INEGI %in% telcgs$CVE_INEGI
+
+data_full$iusa3g <- full_iusa3g
+data_full$iusags <- full_iusags
+data_full$movist <- full_movist
+data_full$telc3g <- full_telc3g
+data_full$telcgs <- full_telcgs
+
+## ---------------------------------
+## Stage V.1 (penetración comunicación)
+## ---------------------------------
+schools <- read.csv("../datos/school/schools.csv",
+                   stringsAsFactors = FALSE)
+schools_key <- create_key(schools$Clave.entidad,
+                         schools$Clave.municipio,
+                         schools$Clave.localidad)
+data.tab  <- data.table(schools_key)
+count_schools <- data.tab[, .N, by = schools_key]
+names(count_schools) <- c("CVE_INEGI", "n_escuelas")
+
+test <- merge(data_full, count_schools, by = "CVE_INEGI")
+data_full <- test
+loc_with_schools <- full_data$CVE_INEGI
 ## ---------------------------------
 ## Stage VI (Link)
 ## ---------------------------------
 ######
 ## Read in data
 ######
-data_flods <- read.csv("../datos/output_data/data_flods.csv", stringsAsFactors = FALSE)
 
 ## Municipalities.
 files <- list.dirs("../datos/shps2015")
@@ -182,11 +255,23 @@ for(i in 1:length(files)){
 censo <- read.csv("../datos/censo_filter.csv",
                  stringsAsFactors = FALSE)
 
+## Riesgo
+data_flods <- read.csv("../datos/output_data/data_flods.csv",
+                      stringsAsFactors = FALSE)
+data_volc  <- read.csv("../datos/output_data/data_volcanes.csv",
+                      stringsAsFactors = FALSE)
+data_lader <- read.csv("../datos/output_data/data_laderas.csv",
+                      stringsAsFactors = FALSE)
+data_tsuna <- read.csv("../datos/output_data/data_tsunamis.csv",
+                      stringsAsFactors = FALSE)
+data_griet <- read.csv("../datos/output_data/data_grietas.csv",
+                      stringsAsFactors = FALSE)
+
 ## ----------------------------
 ## Assoc vulner locs
 ## ---------------------------
-data_vulner <- data_flods
-index_param <- 3
+data_vulner <- data_volc
+index_param <- 4
 
 ## Censo coords
 coords              <- censo[,7:8]
@@ -194,7 +279,7 @@ names(coords)       <- c("lon", "lat")
 coordinates(coords) <- c("lon", "lat")
 
 ## For every vulnerability
-censo$flod  <- NA
+censo$volc  <- NA
 
 for(j in 1:length(municipalities)){
     municipality <- municipalities[[j]]
@@ -213,18 +298,29 @@ for(j in 1:length(municipalities)){
                                                as(mun, "SpatialPolygons")))
         ## Vulner
         vulner <- plyr::count(data_vulner[inside_vulner, index_param])
-        vulner <- vulner$x[which(vulner$freq == max(vulner$freq))]
-        ## Etiquetar
-        censo$flod[inside] <- vulner
+        if(nrow(vulner) > 0){
+            vulner <- vulner$x[which(vulner$freq == max(vulner$freq))]
+            ## Etiquetar
+            censo$volc[inside] <- vulner
+        }
     }
+    print(j)
 }
+
 censo$flod <- factor(censo$flod, levels = unique(censo$flod),
                     labels = c("BAJA",
                                "MEDIA",
                                "ALTA",
                                "ND"))
-## write.csv(censo, "../datos/output_data/cap_data.csv", row.names = FALSE)
-names(censo) <- toupper(names(censo))
+cap.data$inun_risk <- censo$flod
+cap.data$VUL       <- NULL
+
+## names(cap.data) <- toupper(names(cap.data))
+write.csv(data_full, "../datos/output_data/cap_data.csv", row.names = FALSE)
+## cap.data <- read.csv("../datos/output_data/cap_data.csv", stringsAsFactors = FALSE)
+censo_interest <- censo[,11:15]
+names(censo_interest) <- c("PC", "TELEFON", "CEL", "INTER", "CVE_INEGI")
+data_full <- merge(data_full, censo_interest, by = "CVE_INEGI")
 
 ## graficar
 mun <- readOGR("../datos/mex_municipios",
