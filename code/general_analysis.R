@@ -315,7 +315,7 @@ censo$flod <- factor(censo$flod, levels = unique(censo$flod),
 cap.data$inun_risk <- censo$flod
 cap.data$VUL       <- NULL
 
-## names(cap.data) <- toupper(names(cap.data))
+names(data_full) <- toupper(names(data_full))
 write.csv(data_full, "../datos/output_data/cap_data.csv", row.names = FALSE)
 ## cap.data <- read.csv("../datos/output_data/cap_data.csv", stringsAsFactors = FALSE)
 censo_interest <- censo[,11:15]
@@ -345,5 +345,13 @@ mun_plot
 
 
 ## ----------------------
-## Marg
+## Final danger
 ## ----------------------
+risks <- read.csv("../datos/vulnerability/risks.csv",
+                 stringsAsFactors = FALSE)
+
+risk_interest <- risks[,c(1,4,5)]
+names(risk_interest) <- c("CVE_INEGI", "agrietamientos", "laderas")
+
+test <- merge(data_full, risk_interest, by = "CVE_INEGI")
+data_full <- test
